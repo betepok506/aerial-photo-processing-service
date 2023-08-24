@@ -13,15 +13,19 @@ rio color --co photometric=rgb --out-dtype uint8 landsat8_mercator.tif landsat8_
 
 Смержить каналы:
 
-docker run -v D:/diploma_project/aerial_photo_processing_service/data:/data osgeo/gdal gdal_merge.py -o /data/output_28.tif /data/LC09_L2SP_168028_20230612_20230614_02_T1/LC09_L2SP_168028_20230612_20230614_02_T1_SR_B4.TIF /data/LC09_L2SP_168028_20230612_20230614_02_T1/LC09_L2SP_168028_20230612_20230614_02_T1_SR_B3.TIF /data/LC09_L2SP_168028_20230612_20230614_02_T1/LC09_L2SP_168028_20230612_20230614_02_T1_SR_B2.TIF  -separate
+docker run -v D:/diploma_project/aerial_photo_processing_service/data:/data osgeo/gdal gdal_merge.py -o 
+/data/output_131016_20210729_20210804.tif 
+/data/LC08_L2SP_131016_20210729_20210804_02_T1/LC08_L2SP_131016_20210729_20210804_02_T1_SR_B7.TIF 
+/data/LC08_L2SP_131016_20210729_20210804_02_T1/LC08_L2SP_131016_20210729_20210804_02_T1_SR_B6.TIF 
+/data/LC08_L2SP_131016_20210729_20210804_02_T1/LC08_L2SP_131016_20210729_20210804_02_T1_SR_B2.TIF  -separate
 
 Сделать rgb:
 
-docker run -v D:/diploma_project/aerial_photo_processing_service/data:/data osgeo/gdal gdal_translate -scale -ot Byte /data/output.tif /data/output_8bit.tif
+docker run -v D:/diploma_project/aerial_photo_processing_service/data:/data osgeo/gdal gdal_translate -scale -ot Byte /data/output_131016_20210729_20210804.tif  /data/output_8bit_131016_20210729_20210804.tif 
 
 Сгенерировать tiles:
  Старый вариант 
 docker run --rm -v D:/diploma_project/aerial_photo_processing_service/data:/data niene/gdal2tiles-leaflet -l -p raster -z 0-5 -w none /data/output_8bit.tif /data/tilesdir
 
 Новый и правильный 
- docker run --rm -v D:/diploma_project/aerial_photo_processing_service/data:/data osgeo/gdal gdal2tiles.py -z 7-12 -w none /data/output_28_8bit.tif /data/tilesdir_28
+ docker run --rm -v D:/diploma_project/aerial_photo_processing_service/data:/data osgeo/gdal gdal2tiles.py -z 7-12 -w none /data/output_8bit_131016_20210729_20210804.tif  /data/tilesdir_131016_20210729_20210804 

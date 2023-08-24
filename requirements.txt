@@ -3,3 +3,4 @@ rio-color
 click
 requests
 pillow
+mlflow
