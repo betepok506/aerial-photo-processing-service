@@ -28,4 +28,11 @@ docker run -v D:/diploma_project/aerial_photo_processing_service/data:/data osge
 docker run --rm -v D:/diploma_project/aerial_photo_processing_service/data:/data niene/gdal2tiles-leaflet -l -p raster -z 0-5 -w none /data/output_8bit.tif /data/tilesdir
 
 Новый и правильный 
- docker run --rm -v D:/diploma_project/aerial_photo_processing_service/data:/data osgeo/gdal gdal2tiles.py -z 7-12 -w none /data/output_8bit_131016_20210729_20210804.tif  /data/tilesdir_131016_20210729_20210804 
+ docker run --rm -v D:/diploma_project/aerial_photo_processing_service/data:/data osgeo/gdal gdal2tiles.py -z 7-12 -w none /data/output_8bit_131016_20210729_20210804.tif  /data/tilesdir_131016_20210729_20210804
+
+
+Улучшения:
+- [ ] Синхронизация Dags c GitHub
+- [ ] Настроить удаленный запуск Dags
+- [ ] Настроить Dag по закачке снимков с параметрами
+- [ ] Добавить скрипт для выкачки снимков с API Sentinel
