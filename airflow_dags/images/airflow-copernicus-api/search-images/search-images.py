@@ -6,12 +6,35 @@ import os
 from sentinelsat.exceptions import SentinelAPIError
 from typing import List
 from utils import connect_sentinel_api
+from shapely import geometry
+import time
+import logging
+import logging.config
+
+_log_format = "%(asctime)s\t%(levelname)s\t%(name)s\t" \
+              "%(filename)s.%(funcName)s " \
+              "line: %(lineno)d | \t%(message)s"
+stream_handler = logging.StreamHandler()
+stream_handler.setLevel(logging.DEBUG)
+stream_handler.setFormatter(logging.Formatter(_log_format))
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+logger.addHandler(stream_handler)
 
 USER_LOGIN = os.getenv("USER_LOGIN", 'yami116')  # sej44363@omeie.com
 USER_PASSWORD = os.getenv("USER_PASSWORD", '12345678qwerty')
 URL_API = 'https://scihub.copernicus.eu/dhus'
 NUM_RECONNECTION_ATTEMPTS = 5
 NUM_QUERY_ATTEMPTS = 5
+
+
+class MetaInformationPolygon:
+    def __init__(self, polygon):
+        self.polygon = polygon
+        self.cloudcoverpercentage = (None, None)
+        self.platformname = 'Sentinel-2'
+        self.processinglevel = 'Level-2A'
+        self.date = ('20190601', '20190626')
 
 
 def request_unloaded_images_db(list_images: List) -> List:
@@ -31,7 +54,7 @@ def request_unloaded_images_db(list_images: List) -> List:
     return list_images
 
 
-def request_polygons_db(polygons):
+def request_polygons_db():
     """
     Функция для запроса необходимых полигонов для поиска снимков ДЗЗ
 
@@ -40,17 +63,16 @@ def request_polygons_db(polygons):
     `List`
         dfd
     """
+    polygons = []
+    poly = geometry.Polygon([[44.680385, 54.721345],
+                             [46.226831, 54.781341],
+                             [46.306982, 53.698870],
+                             [44.392784, 53.779930]])
+
+    example_polygon = MetaInformationPolygon(polygon=poly)
+    polygons.append(example_polygon)
     result = polygons
     return result
-
-
-class MetaInformationPolygon:
-    def __init__(self):
-        polygon = ''
-        cloudcoverpercentage = (None, None)
-        platformname = 'Sentinel-2'
-        processinglevel = 'Level-2A'
-        date = ('20190601', '20190626')
 
 
 def search_images(api: SentinelAPI,
@@ -73,7 +95,7 @@ def search_images(api: SentinelAPI,
     `List`
         Список найденных изображений, соответствующих переданным полигонам
     """
-
+    sleep_time = 5
     result = []
     for polygon in polygons:
         cur_num_query_attempts = 0
@@ -86,23 +108,37 @@ def search_images(api: SentinelAPI,
                                      cloudcoverpercentage=polygon.cloudcoverpercentage
                                      )
                 result.extend(products)
-                continue
+                break
             except SentinelAPIError as exception_sentinel_api:
                 cur_num_query_attempts += 1
-                print(f"Exception: {exception_sentinel_api}")
+                logger.warning(f"The request could not be executed. Exception: {exception_sentinel_api}. "
+                               f"Retry after {sleep_time} seconds")
+                time.sleep(sleep_time)
+                sleep_time += 1
+        else:
+            raise SentinelAPIError("The request could not be executed!")
 
     return result
 
 
 def saving_images_information(info_images):
+    print(info_images)
     pass
 
 
 def main():
     api = connect_sentinel_api(USER_LOGIN, USER_PASSWORD, URL_API, NUM_RECONNECTION_ATTEMPTS)
+    logger.info("Authorization was successful!")
+
     polygons = request_polygons_db()
+    logger.info(f"Polygons have been successfully obtained! Number of polygons {len(polygons)} pieces")
+
     found_images = search_images(api, polygons, NUM_QUERY_ATTEMPTS)
+    logger.info(f"The image request was successfully completed. {len(found_images)} images found")
+
     unloaded_images = request_unloaded_images_db(found_images)
+    logger.info(f"The request for uploaded images was successfully executed. "
+                f"Number of images to upload: {len(unloaded_images)}")
     saving_images_information(unloaded_images)
 
     # Авторизация на API Copernicus
