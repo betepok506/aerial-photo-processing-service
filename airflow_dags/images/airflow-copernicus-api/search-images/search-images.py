@@ -1,15 +1,17 @@
 '''
 Данный модуль содержит функционал для запроса снимков с сервера Copernicus, согласно переданным параметрам
 '''
-from sentinelsat import SentinelAPI, read_geojson, geojson_to_wkt
+from sentinelsat import SentinelAPI
 import os
 from sentinelsat.exceptions import SentinelAPIError
 from typing import List
 from utils import connect_sentinel_api
 from shapely import geometry
 import time
-import logging
 import logging.config
+import pandas as pd
+
+# import json
 
 _log_format = "%(asctime)s\t%(levelname)s\t%(name)s\t" \
               "%(filename)s.%(funcName)s " \
@@ -26,6 +28,8 @@ USER_PASSWORD = os.getenv("USER_PASSWORD", '12345678qwerty')
 URL_API = 'https://scihub.copernicus.eu/dhus'
 NUM_RECONNECTION_ATTEMPTS = 5
 NUM_QUERY_ATTEMPTS = 5
+# Прокинуть уникальный id
+PATH_TO_SAVE_RESULTS = os.getenv("PATH_TO_SAVE_RESULTS", "./data/results.csv")
 
 
 class MetaInformationPolygon:
@@ -34,7 +38,7 @@ class MetaInformationPolygon:
         self.cloudcoverpercentage = (None, None)
         self.platformname = 'Sentinel-2'
         self.processinglevel = 'Level-2A'
-        self.date = ('20190601', '20190626')
+        self.date = ('20230801', '20230826')
 
 
 def request_unloaded_images_db(list_images: List) -> List:
@@ -121,9 +125,8 @@ def search_images(api: SentinelAPI,
     return result
 
 
-def saving_images_information(info_images):
-    print(info_images)
-    pass
+def saving_images_information(info_images: List, path_to_save: str):
+    pd.DataFrame({'images_id': info_images}).to_csv(path_to_save, header=False, index=False)
 
 
 def main():
@@ -139,13 +142,13 @@ def main():
     unloaded_images = request_unloaded_images_db(found_images)
     logger.info(f"The request for uploaded images was successfully executed. "
                 f"Number of images to upload: {len(unloaded_images)}")
-    saving_images_information(unloaded_images)
+    saving_images_information(unloaded_images, PATH_TO_SAVE_RESULTS)
 
     # Авторизация на API Copernicus
     # Запрос необходимых полигонов на сервере приложения
     # Запрос этих полигонов на Copernicus
     # Запрос сравнения полученных полигонов и уже скаченных на сервере приложения
-    # Создание json  с результатами работы (Приписать к имени уникальный id)
+    # Создание csv  с результатами работы (Приписать к имени уникальный id)
 
 
 if __name__ == "__main__":

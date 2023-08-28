@@ -285,6 +285,20 @@ services:
     image: airflow-osgeo-gdal
     restart: "no"
 
+  api-search-images:
+    build:
+      context: images/airflow-copernicus-api
+      dockerfile: search-images/Dockerfile
+    image: airflow-copernicus-api/search-images
+    restart: "no"
+
+  api-download-images:
+    build:
+      context: images/airflow-copernicus-api
+      dockerfile: download-images/Dockerfile
+    image: airflow-copernicus-api/download-images
+    restart: "no"
+
 
 #  generate-data:
 #    build:
