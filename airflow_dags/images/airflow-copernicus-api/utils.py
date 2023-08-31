@@ -35,7 +35,7 @@ def connect_sentinel_api(user_login: str,
     Returns
     ------------
     `SentinelAPI`
-        Класс, представляющий функционал API Copernicus
+        Класс, представляющий функционал SentinelAPI
     '''
     cur_num_reconnection_attempts = 0
     sleep_time = 5

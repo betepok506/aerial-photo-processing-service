@@ -25,11 +25,16 @@ URL_API = 'https://scihub.copernicus.eu/dhus'
 NUM_RECONNECTION_ATTEMPTS = 5
 
 
-@click.command()
-@click.option('--image-id', type=str,
-              default=None,
-              help='A unique image identifier obtained from the SentinelAPI')
-def main(image_id: str):
+# @click.command()
+# @click.option('--image-id', type=str,
+#               default=None,
+#               help='A unique image identifier obtained from the SentinelAPI')
+def main():
+    image_id = os.getenv("IMAGE_ID")
+    logger.info(f"Image id {image_id}")
+    if image_id is None:
+        raise "Image id must be a string!"
+
     api = connect_sentinel_api(USER_LOGIN, USER_PASSWORD, URL_API, NUM_RECONNECTION_ATTEMPTS)
     logger.info("Authorization was successful!")
     is_online = api.is_online(image_id)

@@ -1,3 +1,4 @@
 click
 sentinelsat
 shapely
+pandas
