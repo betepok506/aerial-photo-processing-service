@@ -9,7 +9,8 @@ from airflow.utils.decorators import apply_defaults
 
 LOCAL_DATA_DIR = Variable.get('local_data_dir')
 LOCAL_MLRUNS_DIR = Variable.get('local_mlruns_dir')
-NUM_PARALLEL_SENTINEL_DOWNLOADS = 1
+NUM_PARALLEL_SENTINEL_DOWNLOADS = 4
+NUM_PARALLEL_SENTINEL_IMAGE_PROCESSING = 5
 
 
 def wait_for_file(file_name: str):

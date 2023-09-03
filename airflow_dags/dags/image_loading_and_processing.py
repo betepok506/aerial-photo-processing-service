@@ -8,7 +8,8 @@ from docker.types import Mount
 from utils import (
     LOCAL_MLRUNS_DIR, LOCAL_DATA_DIR,
     default_args, wait_for_file, CreatePoolOperator,
-    NUM_PARALLEL_SENTINEL_DOWNLOADS)
+    NUM_PARALLEL_SENTINEL_DOWNLOADS,
+    NUM_PARALLEL_SENTINEL_IMAGE_PROCESSING)
 from airflow.decorators import task, task_group
 from airflow.operators.python import get_current_context
 
@@ -21,7 +22,7 @@ with DAG(
         'image_loading_and_processing',
         default_args=default_args,
         schedule_interval='@daily',
-        start_date=datetime(2023, 9, 1),
+        start_date=datetime(2023, 9, 3),
         render_template_as_native_obj=True,
         params={
             "prefix_local_storage_path": './data/',
@@ -30,6 +31,8 @@ with DAG(
             "prefix_file_lta_storage": "images_lts_storage_",
             "suffix_file_lta_storage": ".csv",
             "bands": [2, 3, 4],
+            "minimum_tile_zoom": 7,
+            "maximum_tile_zoom": 9,
             "spatial_expansion": 10
         }
 ) as dag:
@@ -53,7 +56,13 @@ with DAG(
         CreatePoolOperator(
             slots=NUM_PARALLEL_SENTINEL_DOWNLOADS,
             name='downloading_sentinels',
-            task_id='create_pool'
+            task_id='create_pool_sentinel_downloads'
+        ).execute(context)
+
+        CreatePoolOperator(
+            slots=NUM_PARALLEL_SENTINEL_IMAGE_PROCESSING,
+            name='image_preprocessing',
+            task_id='create_pool_image_preprocessing'
         ).execute(context)
 
 
@@ -120,52 +129,49 @@ with DAG(
                 tmp_dict[k] = row[k]
 
             result.append(tmp_dict)
-
-        print(result)
+        print(f'RESULT!! : {result[0]}')
         return result
 
 
     @task_group
     def processing_images(name_folder):
         # TODO: Удаление файлов после добавления их в бд
-        # TODO: Добавить балансировку нагрузки с помощью Pools !! Важно для дебага
         @task(pool='downloading_sentinels', pool_slots=1)
         def download_image(meta_info_image):
-            # context = get_current_context()
-            # image_id = meta_info_image["image_id"]
-            # filename = meta_info_image["filename"]
-            # DockerOperator(
-            #     image='airflow-copernicus-api/download-images',
-            #     command=f'download-image.py',
-            #     network_mode='bridge',
-            #     task_id='docker-airflow-download-images',
-            #     # do_xcom_push=False,
-            #     docker_url="unix://var/run/docker.sock",
-            #     auto_remove=True,
-            #     environment={
-            #         "IMAGE_ID": image_id
-            #     },
-            #     mounts=[Mount(source=LOCAL_DATA_DIR, target='/data', type='bind')]
-            # ).execute(context=context)
-            # print(f'OUTPUT: {filename}')
-            filename = 'S2A_MSIL2A_20230825T080611_N0509_R078_T38UMF_20230825T124859.SAFE'
+            context = get_current_context()
+            image_id = meta_info_image["image_id"]
+            filename = meta_info_image["filename"]
+            DockerOperator(
+                image='airflow-copernicus-api/download-images',
+                command=f'download-image.py',
+                network_mode='bridge',
+                task_id='docker-airflow-download-images',
+                # do_xcom_push=False,
+                docker_url="unix://var/run/docker.sock",
+                auto_remove=True,
+                environment={
+                    "IMAGE_ID": image_id
+                },
+                mounts=[Mount(source=LOCAL_DATA_DIR, target='/data', type='bind')]
+            ).execute(context=context)
+            print(f'OUTPUT: {filename}')
+            # filename = 'S2A_MSIL2A_20230825T080611_N0509_R078_T38UMF_20230825T124859.SAFE'
             return filename
 
-
-        @task
+        @task(pool='image_preprocessing', pool_slots=1)
         def unzipping(filename):
-            # import zipfile
-            # import os
-            # print(f'INPUT: {filename}')
-            # context = get_current_context()
-            # unzipped_file = os.path.join(context['params']['prefix_local_storage_path'],
-            #                              filename.split('.')[0] + '.zip')
-            # with zipfile.ZipFile(unzipped_file, 'r') as zip_ref:
-            #     zip_ref.extractall(context['params']['prefix_local_storage_path'])
+            import zipfile
+            import os
+            print(f'INPUT: {filename}')
+            context = get_current_context()
+            unzipped_file = os.path.join(context['params']['prefix_local_storage_path'],
+                                         filename.split('.')[0] + '.zip')
+            with zipfile.ZipFile(unzipped_file, 'r') as zip_ref:
+                zip_ref.extractall(context['params']['prefix_local_storage_path'])
 
             return filename
 
-        @task
+        @task(pool='image_preprocessing', pool_slots=1)
         def extracting_meta_information(filename):
             from bs4 import BeautifulSoup
             import glob
@@ -235,7 +241,7 @@ with DAG(
             print(f'Output: {product_info}')
             return product_info
 
-        @task
+        @task(pool='image_preprocessing', pool_slots=1)
         def merge(product_info):
             import os
 
@@ -248,7 +254,7 @@ with DAG(
             DockerOperator(
                 image='airflow-osgeo-gdal',
                 command='gdalbuildvrt -separate '
-                        f"{os.path.join(prefix_local_storage_path, f'stack_{filename}.vrt')} "
+                        f"{os.path.join(prefix_local_storage_path, filename, f'stack_{filename}.vrt')} "
                         f"{os.path.join(prefix_local_storage_path, filename, product_info['found_file_names'][0])} "
                         f"{os.path.join(prefix_local_storage_path, filename, product_info['found_file_names'][1])} "
                         f"{os.path.join(prefix_local_storage_path, filename, product_info['found_file_names'][2])} ",
@@ -261,7 +267,7 @@ with DAG(
             ).execute(context=context)
             return product_info
 
-        @task
+        @task(pool='image_preprocessing', pool_slots=1)
         def create_rgb(product_info):
             import os
 
@@ -271,8 +277,8 @@ with DAG(
             DockerOperator(
                 image='airflow-osgeo-gdal',
                 command='gdal_translate -scale 0 4096 0 255 -ot Byte  '
-                        f"{os.path.join(prefix_local_storage_path, f'stack_{filename}.vrt')} "
-                        f"{os.path.join(prefix_local_storage_path, f'stack_{filename}.tif')}",
+                        f"{os.path.join(prefix_local_storage_path, filename, f'stack_{filename}.vrt')} "
+                        f"{os.path.join(prefix_local_storage_path, filename, f'stack_{filename}.tif')}",
                 network_mode='bridge',
                 task_id='docker-airflow-create-rgb',
                 # do_xcom_push=False,
@@ -282,37 +288,65 @@ with DAG(
             ).execute(context=context)
             return product_info
 
-        @task
+        @task(pool='image_preprocessing', pool_slots=1)
         def create_tiles(product_info):
             import os
 
             context = get_current_context()
             prefix_local_storage_path = context["params"]['prefix_local_storage_path']
             filename = product_info["filename"]
+            minimum_tile_zoom = context['params']['minimum_tile_zoom']
+            maximum_tile_zoom = context['params']['maximum_tile_zoom']
 
+            print(f"{os.path.join(prefix_local_storage_path, f'stack_{filename}.tif')} ")
             DockerOperator(
                 image='airflow-osgeo-gdal',
                 command='gdal2tiles.py '
-                        '-z 7-9 '
+                        f'-z {minimum_tile_zoom}-{maximum_tile_zoom} '
                         '-w none '
-                        f"{os.path.join(prefix_local_storage_path, f'stack_{filename}.tif')} "
-                        f"{os.path.join(prefix_local_storage_path, f'tiles_{filename}')} ",
+                        f"{os.path.join(prefix_local_storage_path, filename, f'stack_{filename}.tif')} "
+                        f"{os.path.join(prefix_local_storage_path, filename, f'tiles_{filename}')} ",
 
                 network_mode='bridge',
                 task_id='docker-airflow-create-tiles',
                 # do_xcom_push=False,
-                docker_URL="//var/run/docker.sock",
                 docker_url="unix://var/run/docker.sock",
                 auto_remove=True,
                 mounts=[Mount(source=LOCAL_DATA_DIR, target='/data', type='bind')]
             ).execute(context=context)
+
+            return product_info
+
+        # @task
+        # def delete(product_info):
+        #     import shutil
+        #     import os
+        #
+        #     context = get_current_context()
+        #     prefix_local_storage_path = context["params"]['prefix_local_storage_path']
+        #     filename = product_info["filename"]
+        #     print(f"Путь до папки: {prefix_local_storage_path}")
+        #     shutil.rmtree(os.path.join(f'{prefix_local_storage_path}', filename))
+        #
+        #     path_online_storage_image_file = context["ti"].xcom_pull(
+        #             task_ids="initializing_parameters",
+        #             key="path_online_storage_image_file")
+        #     print(f'Путь до файла: {path_online_storage_image_file}')
+        #     os.remove(f'{path_online_storage_image_file}')
+        #
+        #     path_lta_storage_image_file = context["ti"].xcom_pull(
+        #             task_ids="initializing_parameters",
+        #             key="path_lta_storage_image_file")
+        #     print(f'Путь до файла: {path_lta_storage_image_file}')
+        #     os.remove(f"{path_lta_storage_image_file}")
 
         filename = download_image(name_folder)
         filename = unzipping(filename)
         product_info = extracting_meta_information(filename)
         product_info = merge(product_info=product_info)
         product_info = create_rgb(product_info=product_info)
-        create_tiles(product_info=product_info)
+        product_info = create_tiles(product_info=product_info)
+        # delete(product_info)
 
         # create_tiles(folder=create_rgb(folder=))
 
