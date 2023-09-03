@@ -5,36 +5,56 @@ from airflow import DAG
 from airflow.sensors.python import PythonSensor
 from airflow.providers.docker.operators.docker import DockerOperator
 from docker.types import Mount
-from utils import LOCAL_MLRUNS_DIR, LOCAL_DATA_DIR, default_args, wait_for_file
+from utils import (
+    LOCAL_MLRUNS_DIR, LOCAL_DATA_DIR,
+    default_args, wait_for_file, CreatePoolOperator,
+    NUM_PARALLEL_SENTINEL_DOWNLOADS)
 from airflow.decorators import task, task_group
 from airflow.operators.python import get_current_context
+
+# Создание пула закачки снимков
+
+# CreatePoolOperator('downloading_sentinels', 4)
 
 # TODO: Передать уникальный id для идентификации загрузки дага!
 with DAG(
         'image_loading_and_processing',
         default_args=default_args,
         schedule_interval='@daily',
-        start_date=datetime(2023, 8, 31),
+        start_date=datetime(2023, 9, 1),
         render_template_as_native_obj=True,
         params={
-            "prefix_file_online_storage": "./data/images_online_storage_",
+            "prefix_local_storage_path": './data/',
+            "prefix_file_online_storage": "images_online_storage_",
             "suffix_file_online_storage": ".csv",
-            "prefix_file_lta_storage": "./data/images_lts_storage_",
+            "prefix_file_lta_storage": "images_lts_storage_",
             "suffix_file_lta_storage": ".csv",
+            "bands": [2, 3, 4],
+            "spatial_expansion": 10
         }
 ) as dag:
+    # TODO: удалить csv файлы в конце работы DAG
     @task
     def initializing_parameters():
+        import os
         context = get_current_context()
         dag_id = str(uuid.uuid4())
         context["ti"].xcom_push(key='dag_id', value=dag_id)
-        path_online_storage_image_file = f"{context['params']['prefix_file_online_storage']}" + dag_id + \
-                                         f"{context['params']['suffix_file_online_storage']}"
+        path_online_storage_image_file = os.path.join(f"{context['params']['prefix_local_storage_path']}",
+                                                      f"{context['params']['prefix_file_online_storage']}" + dag_id + \
+                                                      f"{context['params']['suffix_file_online_storage']}")
         context["ti"].xcom_push(key='path_online_storage_image_file', value=path_online_storage_image_file)
 
-        path_lta_storage_image_file = f"{context['params']['prefix_file_lta_storage']}" + dag_id + \
-                                      f"{context['params']['suffix_file_lta_storage']}"
+        path_lta_storage_image_file = os.path.join(f"{context['params']['prefix_local_storage_path']}",
+                                                   f"{context['params']['prefix_file_lta_storage']}" + dag_id + \
+                                                   f"{context['params']['suffix_file_lta_storage']}")
         context["ti"].xcom_push(key='path_lta_storage_image_file', value=path_lta_storage_image_file)
+
+        CreatePoolOperator(
+            slots=NUM_PARALLEL_SENTINEL_DOWNLOADS,
+            name='downloading_sentinels',
+            task_id='create_pool'
+        ).execute(context)
 
 
     @task
@@ -93,52 +113,145 @@ with DAG(
             task_ids="initializing_parameters",
             key="path_online_storage_image_file")
         data = pd.read_csv(filename)
-        print(f'Data !!!!!!!!!!!!!: {len(data)}')
         result = []
         for ind, row in data.iterrows():
-            result.append({'image_id': row["image_id"],
-                           'filename': row['filename']})
-            # result.append(row["image_id"])
+            tmp_dict = {}
+            for k in row.keys():
+                tmp_dict[k] = row[k]
+
+            result.append(tmp_dict)
+
         print(result)
         return result
 
 
     @task_group
     def processing_images(name_folder):
-        # Внедрить закачку
-        @task
+        # TODO: Удаление файлов после добавления их в бд
+        # TODO: Добавить балансировку нагрузки с помощью Pools !! Важно для дебага
+        @task(pool='downloading_sentinels', pool_slots=1)
         def download_image(meta_info_image):
-            context = get_current_context()
-            print(f"!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! {meta_info_image}")
-            image_id = meta_info_image["image_id"]
-            filename = meta_info_image["filename"]
-            DockerOperator(
-                image='airflow-copernicus-api/download-images',
-                command=f'download-image.py',
-                network_mode='bridge',
-                task_id='docker-airflow-download-images',
-                # do_xcom_push=False,
-                docker_url="unix://var/run/docker.sock",
-                auto_remove=True,
-                environment={
-                    "IMAGE_ID": image_id
-                },
-                mounts=[Mount(source=LOCAL_DATA_DIR, target='/data', type='bind')]
-            ).execute(context=context)
-            return image_id
+            # context = get_current_context()
+            # image_id = meta_info_image["image_id"]
+            # filename = meta_info_image["filename"]
+            # DockerOperator(
+            #     image='airflow-copernicus-api/download-images',
+            #     command=f'download-image.py',
+            #     network_mode='bridge',
+            #     task_id='docker-airflow-download-images',
+            #     # do_xcom_push=False,
+            #     docker_url="unix://var/run/docker.sock",
+            #     auto_remove=True,
+            #     environment={
+            #         "IMAGE_ID": image_id
+            #     },
+            #     mounts=[Mount(source=LOCAL_DATA_DIR, target='/data', type='bind')]
+            # ).execute(context=context)
+            # print(f'OUTPUT: {filename}')
+            filename = 'S2A_MSIL2A_20230825T080611_N0509_R078_T38UMF_20230825T124859.SAFE'
+            return filename
+
 
         @task
-        def merge(folder):
-            context = get_current_context()
+        def unzipping(filename):
+            # import zipfile
+            # import os
+            # print(f'INPUT: {filename}')
+            # context = get_current_context()
+            # unzipped_file = os.path.join(context['params']['prefix_local_storage_path'],
+            #                              filename.split('.')[0] + '.zip')
+            # with zipfile.ZipFile(unzipped_file, 'r') as zip_ref:
+            #     zip_ref.extractall(context['params']['prefix_local_storage_path'])
 
+            return filename
+
+        @task
+        def extracting_meta_information(filename):
+            from bs4 import BeautifulSoup
+            import glob
+            import os
+            print(f"filename: {filename}")
+            context = get_current_context()
+            bands = context['params']['bands']
+            spatial_expansion = context['params']['spatial_expansion']
+            prefix_local_storage_path = context["params"]['prefix_local_storage_path']
+
+            path_to_file = os.path.join(prefix_local_storage_path,
+                                        filename, 'MTD*')
+            xml_search_result = glob.glob(path_to_file)
+            assert len(xml_search_result) != 0, "The file with the information was not found!"
+            path_to_xml_file = xml_search_result[0]
+
+            print(f"bands: {bands}")
+            print(f"spatial_expansion: {spatial_expansion}")
+            print(f"path_to_xml_file: {path_to_xml_file}")
+
+            with open(path_to_xml_file, 'r') as f:
+                data = f.read()
+
+            bs_data = BeautifulSoup(data, "xml")
+
+            # Производим поиск путей к изображениям нужных каналов
+            product_organisation = bs_data.find("Product_Organisation")
+            image_files = product_organisation.find_all('IMAGE_FILE')
+            file_paths = [item.contents[0] for item in image_files]
+            found_file_names = []
+            for band in bands:
+                for cur_file_path in file_paths:
+                    if cur_file_path.find(F'B{band:02}_{spatial_expansion}m') != -1:
+                        found_file_names.append(cur_file_path + '.jp2')
+
+            assert len(bands) == len(
+                found_file_names), 'The number of paths found and the number of channels must match!'
+            assert 3 == len(
+                found_file_names), 'Too many channels! The supported number of channels is 3!'
+
+            # Извлечение дополнительных полей
+            processing_level = bs_data.find("PROCESSING_LEVEL")
+            if processing_level.contents is not None:
+                processing_level = processing_level.contents[0]
+            else:
+                processing_level = None
+
+            product_type = bs_data.find("PRODUCT_TYPE")
+            if product_type.contents is not None:
+                product_type = product_type.contents[0]
+            else:
+                product_type = None
+
+            product_start_tine = bs_data.find("PRODUCT_START_TIME")
+            if product_start_tine.contents is not None:
+                product_start_tine = product_start_tine.contents[0]
+            else:
+                product_start_tine = None
+
+            product_info = {
+                'filename': filename,
+                "found_file_names": found_file_names,
+                'product_start_tine': product_start_tine,
+                'product_type': product_type,
+                'processing_level': processing_level
+            }
+            print(f'Output: {product_info}')
+            return product_info
+
+        @task
+        def merge(product_info):
+            import os
+
+            context = get_current_context()
+            # TODO: Продумать что еще нужно прокинуть и как потом это безопасно удалить
+            #  (Можно создать папку дага и удалить ее)  или удалять по ходу на следующем этапе
+            prefix_local_storage_path = context["params"]['prefix_local_storage_path']
+            filename = product_info["filename"]
+            print(f'Input: {product_info}')
             DockerOperator(
                 image='airflow-osgeo-gdal',
-                command='gdalbuildvrt -separate'
-                        f'/data/stack_{folder}.vrt'
-                        f'/data/{folder}/{folder}_SR_B7.TIF '
-                        f'/data/{folder}/{folder}_SR_B6.TIF '
-                        f'/data/{folder}/{folder}_SR_B2.TIF '
-                        '-separate',
+                command='gdalbuildvrt -separate '
+                        f"{os.path.join(prefix_local_storage_path, f'stack_{filename}.vrt')} "
+                        f"{os.path.join(prefix_local_storage_path, filename, product_info['found_file_names'][0])} "
+                        f"{os.path.join(prefix_local_storage_path, filename, product_info['found_file_names'][1])} "
+                        f"{os.path.join(prefix_local_storage_path, filename, product_info['found_file_names'][2])} ",
                 network_mode='bridge',
                 task_id='docker-airflow-merge-preprocess',
                 # do_xcom_push=False,
@@ -146,17 +259,20 @@ with DAG(
                 auto_remove=True,
                 mounts=[Mount(source=LOCAL_DATA_DIR, target='/data', type='bind')]
             ).execute(context=context)
-            return folder
+            return product_info
 
         @task
-        def create_rgb(folder):
-            context = get_current_context()
+        def create_rgb(product_info):
+            import os
 
+            context = get_current_context()
+            prefix_local_storage_path = context["params"]['prefix_local_storage_path']
+            filename = product_info["filename"]
             DockerOperator(
                 image='airflow-osgeo-gdal',
-                command='gdal_translate -scale -ot Byte '
-                        f'/data/output_{folder}.tif  '
-                        f'/data/output_8bit_{folder}.tif',
+                command='gdal_translate -scale 0 4096 0 255 -ot Byte  '
+                        f"{os.path.join(prefix_local_storage_path, f'stack_{filename}.vrt')} "
+                        f"{os.path.join(prefix_local_storage_path, f'stack_{filename}.tif')}",
                 network_mode='bridge',
                 task_id='docker-airflow-create-rgb',
                 # do_xcom_push=False,
@@ -164,18 +280,23 @@ with DAG(
                 auto_remove=True,
                 mounts=[Mount(source=LOCAL_DATA_DIR, target='/data', type='bind')]
             ).execute(context=context)
+            return product_info
 
         @task
-        def create_tiles(folder):
+        def create_tiles(product_info):
+            import os
+
             context = get_current_context()
+            prefix_local_storage_path = context["params"]['prefix_local_storage_path']
+            filename = product_info["filename"]
 
             DockerOperator(
                 image='airflow-osgeo-gdal',
                 command='gdal2tiles.py '
                         '-z 7-9 '
                         '-w none '
-                        f'/data/output_8bit_{folder}.tif  '
-                        f'/data/tilesdir_yrrraaa_{folder}',
+                        f"{os.path.join(prefix_local_storage_path, f'stack_{filename}.tif')} "
+                        f"{os.path.join(prefix_local_storage_path, f'tiles_{filename}')} ",
 
                 network_mode='bridge',
                 task_id='docker-airflow-create-tiles',
@@ -186,7 +307,14 @@ with DAG(
                 mounts=[Mount(source=LOCAL_DATA_DIR, target='/data', type='bind')]
             ).execute(context=context)
 
-        create_tiles(folder=create_rgb(folder=merge(folder=download_image(name_folder))))
+        filename = download_image(name_folder)
+        filename = unzipping(filename)
+        product_info = extracting_meta_information(filename)
+        product_info = merge(product_info=product_info)
+        product_info = create_rgb(product_info=product_info)
+        create_tiles(product_info=product_info)
+
+        # create_tiles(folder=create_rgb(folder=))
 
 
     list_images = scheduler_image_id()

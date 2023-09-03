@@ -102,7 +102,8 @@ def search_images(api: SentinelAPI,
     """
     sleep_time = 5
     result = {"image_id": [],
-              'filename': []}
+              'filename': [],
+              'title': []}
 
     # result = []
     for polygon in polygons:
@@ -115,9 +116,11 @@ def search_images(api: SentinelAPI,
                                      processinglevel=polygon.processinglevel,
                                      cloudcoverpercentage=polygon.cloudcoverpercentage
                                      )
-                # result.append(products.keys())
+
                 result["image_id"].extend(products.keys())
                 result['filename'].extend([item['filename'] for item in products.values()])
+                result['title'].extend([item['title'] for item in products.values()])
+
                 break
             except SentinelAPIError as exception_sentinel_api:
                 cur_num_query_attempts += 1
@@ -151,15 +154,16 @@ def split_images_storage(api, image_ids: Dict):
     `List`, `List`
         Список id изображений, находящихся в online хранилище, Список id изображений, находящихся в LTA хранилище
     '''
-    images_online_storage, images_lta_storages = {"image_id": [], 'filename': []}, \
-        {"image_id": [], 'filename': []}
+    images_online_storage, images_lta_storages = {k: [] for k in image_ids.keys()}, \
+        {k: [] for k in image_ids.keys()}
     for cur_ind in range(len(image_ids["image_id"])):
         if api.is_online(image_ids["image_id"][cur_ind]):
-            images_online_storage['image_id'].append(image_ids["image_id"][cur_ind])
-            images_online_storage['filename'].append(image_ids["filename"][cur_ind])
+            for k, v in image_ids.items():
+                images_online_storage[k].append(image_ids[k][cur_ind])
+
         else:
-            images_lta_storages['image_id'].append(image_ids["image_id"][cur_ind])
-            images_lta_storages['filename'].append(image_ids["filename"][cur_ind])
+            for k, v in image_ids.items():
+                images_lta_storages[k].append(image_ids[k][cur_ind])
 
     return images_online_storage, images_lta_storages
 

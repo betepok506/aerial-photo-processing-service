@@ -4,3 +4,6 @@ click
 requests
 pillow
 mlflow
+
+beautifulsoup4
+lxml
