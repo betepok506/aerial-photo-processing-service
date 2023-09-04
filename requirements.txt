@@ -4,6 +4,7 @@ click
 requests
 pillow
 mlflow
+cryptography
 
 beautifulsoup4
 lxml
