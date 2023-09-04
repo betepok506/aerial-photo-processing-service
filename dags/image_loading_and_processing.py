@@ -1,3 +1,4 @@
+import os
 from datetime import datetime
 import uuid
 import pandas as pd
@@ -6,7 +7,8 @@ from airflow.sensors.python import PythonSensor
 from airflow.providers.docker.operators.docker import DockerOperator
 from docker.types import Mount
 from utils import (
-    LOCAL_MLRUNS_DIR, LOCAL_DATA_DIR,
+    # LOCAL_MLRUNS_DIR,
+    LOCAL_DATA_DIR,
     default_args, wait_for_file, CreatePoolOperator,
     NUM_PARALLEL_SENTINEL_DOWNLOADS,
     NUM_PARALLEL_SENTINEL_IMAGE_PROCESSING)
@@ -22,7 +24,7 @@ with DAG(
         'image_loading_and_processing',
         default_args=default_args,
         schedule_interval='@daily',
-        start_date=datetime(2023, 9, 3),
+        start_date=datetime(2023, 9, 4),
         render_template_as_native_obj=True,
         params={
             "prefix_local_storage_path": './data/',
@@ -36,7 +38,7 @@ with DAG(
             "spatial_expansion": 10
         }
 ) as dag:
-    # TODO: удалить csv файлы в конце работы DAG
+
     @task
     def initializing_parameters():
         import os
@@ -68,7 +70,6 @@ with DAG(
 
     @task
     def search_images():
-        # TODO: Передать уникальный id для идентификации загрузки дага!
         context = get_current_context()
 
         DockerOperator(
@@ -87,6 +88,10 @@ with DAG(
                 "PATH_LTA_STORAGE_IMAGE_FILE": context["ti"].xcom_pull(
                     task_ids="initializing_parameters",
                     key="path_lta_storage_image_file"),
+
+                "USER_COPERNICUS_LOGIN": os.getenv("USER_COPERNICUS_LOGIN"),
+
+                "USER_COPERNICUS_PASSWORD": os.getenv("USER_COPERNICUS_PASSWORD"),
             },
             mounts=[Mount(source=LOCAL_DATA_DIR, target='/data', type='bind')]
         ).execute(context=context)
@@ -129,13 +134,13 @@ with DAG(
                 tmp_dict[k] = row[k]
 
             result.append(tmp_dict)
-        print(f'RESULT!! : {result[0]}')
+
         return result
 
 
     @task_group
     def processing_images(name_folder):
-        # TODO: Удаление файлов после добавления их в бд
+
         @task(pool='downloading_sentinels', pool_slots=1)
         def download_image(meta_info_image):
             context = get_current_context()
@@ -154,8 +159,7 @@ with DAG(
                 },
                 mounts=[Mount(source=LOCAL_DATA_DIR, target='/data', type='bind')]
             ).execute(context=context)
-            print(f'OUTPUT: {filename}')
-            # filename = 'S2A_MSIL2A_20230825T080611_N0509_R078_T38UMF_20230825T124859.SAFE'
+
             return filename
 
         @task(pool='image_preprocessing', pool_slots=1)
@@ -298,7 +302,6 @@ with DAG(
             minimum_tile_zoom = context['params']['minimum_tile_zoom']
             maximum_tile_zoom = context['params']['maximum_tile_zoom']
 
-            print(f"{os.path.join(prefix_local_storage_path, f'stack_{filename}.tif')} ")
             DockerOperator(
                 image='airflow-osgeo-gdal',
                 command='gdal2tiles.py '
@@ -317,28 +320,27 @@ with DAG(
 
             return product_info
 
-        # @task
-        # def delete(product_info):
-        #     import shutil
-        #     import os
-        #
-        #     context = get_current_context()
-        #     prefix_local_storage_path = context["params"]['prefix_local_storage_path']
-        #     filename = product_info["filename"]
-        #     print(f"Путь до папки: {prefix_local_storage_path}")
-        #     shutil.rmtree(os.path.join(f'{prefix_local_storage_path}', filename))
-        #
-        #     path_online_storage_image_file = context["ti"].xcom_pull(
-        #             task_ids="initializing_parameters",
-        #             key="path_online_storage_image_file")
-        #     print(f'Путь до файла: {path_online_storage_image_file}')
-        #     os.remove(f'{path_online_storage_image_file}')
-        #
-        #     path_lta_storage_image_file = context["ti"].xcom_pull(
-        #             task_ids="initializing_parameters",
-        #             key="path_lta_storage_image_file")
-        #     print(f'Путь до файла: {path_lta_storage_image_file}')
-        #     os.remove(f"{path_lta_storage_image_file}")
+        @task
+        def delete(product_info):
+            # TODO: Удалить zip
+            import shutil
+            import os
+
+            context = get_current_context()
+            prefix_local_storage_path = context["params"]['prefix_local_storage_path']
+            filename = product_info["filename"]
+            shutil.rmtree(os.path.join(f'{prefix_local_storage_path}', filename))
+
+            path_online_storage_image_file = context["ti"].xcom_pull(
+                    task_ids="initializing_parameters",
+                    key="path_online_storage_image_file")
+            os.remove(f'{path_online_storage_image_file}')
+
+            path_lta_storage_image_file = context["ti"].xcom_pull(
+                    task_ids="initializing_parameters",
+                    key="path_lta_storage_image_file")
+
+            os.remove(f"{path_lta_storage_image_file}")
 
         filename = download_image(name_folder)
         filename = unzipping(filename)
@@ -356,4 +358,3 @@ with DAG(
                                                      wait_for_lta_storage_data] >> list_images
 
     processing_images.expand(name_folder=list_images)
-#

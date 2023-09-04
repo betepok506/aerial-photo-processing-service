@@ -21,9 +21,8 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 logger.addHandler(stream_handler)
 
-# Указать данные для авторизации
-USER_LOGIN = os.getenv("USER_LOGIN", 'yami116')  # sej44363@omeie.com
-USER_PASSWORD = os.getenv("USER_PASSWORD", '12345678qwerty')
+USER_LOGIN = os.getenv("USER_COPERNICUS_LOGIN", None)
+USER_PASSWORD = os.getenv("USER_COPERNICUS_PASSWORD", None)
 URL_API = 'https://scihub.copernicus.eu/dhus'
 NUM_RECONNECTION_ATTEMPTS = 5
 NUM_QUERY_ATTEMPTS = 5
@@ -127,7 +126,7 @@ def search_images(api: SentinelAPI,
                 logger.warning(f"The request could not be executed. Exception: {exception_sentinel_api}. "
                                f"Retry after {sleep_time} seconds")
                 time.sleep(sleep_time)
-                sleep_time += 1
+                sleep_time += 5
         else:
             raise SentinelAPIError("The request could not be executed!")
 
@@ -183,9 +182,9 @@ def main():
     logger.info(f'\t PATH_LTA_STORAGE_IMAGE_FILE: {PATH_LTA_STORAGE_IMAGE_FILE}')
 
     api = connect_sentinel_api(USER_LOGIN, USER_PASSWORD, URL_API, NUM_RECONNECTION_ATTEMPTS)
-    logger.info("Authorization was successful!")
 
     polygons = request_polygons_db()
+    logger.info("Authorization was successful!")
     logger.info(f"Polygons have been successfully obtained! Number of polygons {len(polygons)} pieces")
 
     found_images = search_images(api, polygons, NUM_QUERY_ATTEMPTS)
@@ -196,12 +195,9 @@ def main():
                 f"Number of images to upload: {len(unloaded_images)}")
 
     images_online_storage, images_lta_storages = split_images_storage(api, unloaded_images)
-    # filename_online_storage = adding_dag_id_filename(PATH_TO_SAVE_RESULTS, DAG_ID)
-    # saving_images_information(images_online_storage, filename_online_storage)
+
     saving_images_information(images_online_storage, PATH_ONLINE_STORAGE_IMAGE_FILE)
 
-    # filename_lta_storage = adding_dag_id_filename(PATH_TO_SAVE_LTA_RESULTS, DAG_ID)
-    # saving_images_information(images_lta_storages, filename_lta_storage)
     saving_images_information(images_lta_storages, PATH_LTA_STORAGE_IMAGE_FILE)
 
     # Авторизация на API Copernicus
